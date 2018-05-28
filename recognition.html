@@ -1,0 +1,188 @@
+<html>
+<head>
+	<style>
+		video {
+		display:inline-block;
+            top: 50px;
+            left: 0;
+            z-index: -1;
+        }
+        canvas{
+        position: absolute;
+        top: 50px;
+        left: 0;
+        z-index: 1;
+        }
+	</style>
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+</head>
+<div id="ui" style="display:inline-block; width:640px;">
+	<button id='startservice'>Start Recognition</button>
+	<button id='stopservice'>Stop Recognition</button>
+	<button id='sendimage'>Send Single Image</button>
+	<video autoplay></video>
+</div>
+<div id="faces" style="display:inline-block; vertical-align:top;">
+	<p>Detected objects: </p>
+	<div id="face"></div>
+</div>
+<script>
+//for starting events
+let isPlaying = false
+let gotMetadata = false
+
+const video = document.querySelector('video');
+const uploadWidth = 640;
+
+let imageCanvas = document.createElement('canvas');
+let imageCtx = imageCanvas.getContext("2d");
+
+let drawCanvas = document.createElement('canvas');
+document.getElementById("ui").appendChild(drawCanvas);
+//document.body.appendChild(drawCanvas);
+let drawCtx = drawCanvas.getContext("2d");
+
+const constraints = {
+	video: {
+        width: {max: 1200},
+        height: {max: 800}
+    }
+};
+var localMediaStream = null;
+var lastTime = -1;
+var isrecording = false;
+var picturestack = [];
+var uploadURL = "";
+var jpeg_string = "";
+
+document.querySelector('#startservice').onclick = function() {
+	navigator.mediaDevices.getUserMedia(constraints).then(handleSuccess).catch(handleError);
+	isrecording = true;
+}
+
+document.querySelector('#stopservice').onclick = function() {
+	video.pause();
+	isrecording = false;
+	//localMediaStream.stop();
+}
+
+document.querySelector('#sendimage').onclick = function() {
+	getvideoframe();
+}
+
+function handleSuccess(stream) {
+	video.srcObject = stream;
+}
+
+function handleError(error) {
+	console.error('Reeeejected!', error);
+}
+
+function getvideoframe() {
+	if(!isrecording) return;
+
+	imageCanvas.width = drawCanvas.width;
+	imageCanvas.height = drawCanvas.height;
+	//imageCanvas.width = uploadWidth;
+    //imageCanvas.height = uploadWidth * (video.videoHeight / video.videoWidth);
+
+	//drawCanvas.getContext('2d').drawImage(video, 0, 0);
+	imageCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, uploadWidth, uploadWidth *
+		(video.videoHeight / video.videoWidth));
+	jpeg_string = imageCanvas.toDataURL('image/jpeg').replace("data:image/jpeg;base64,","");
+
+    //wait approximately 16ms and run again
+    //setTimeout(getvideoframe,100);
+    sendImage();
+}
+function getUrlParameter(name) {
+    name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+    var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+    var results = regex.exec(location.search);
+    return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+};
+function sendImage() {
+
+    //Set options as form data
+    var formdata = { data:jpeg_string };
+	var access_url="https://118.100.183.101:8080/";
+	if (getUrlParameter('l') == 'local')
+       access_url = "https://192.168.0.42:8080/";
+	$.ajax({
+		type: "POST",
+		//url: "https://ml.deekie.com/enrol/recognition_result",
+		url: access_url + "detection",
+		data: JSON.stringify(formdata),
+		contentType: false,
+		processData: false,
+		success: function (msg) {
+			let boxes = JSON.parse(msg);
+
+			//draw the boxes
+			drawBoxes(boxes);
+//dispatch an event
+            let event = new CustomEvent('facialRecognition', {detail: boxes});
+            document.dispatchEvent(event);
+			//Save and send the next image
+			getvideoframe();
+		}
+	})
+}
+
+function drawBoxes(faces)
+{
+	drawCtx.font = "bold 20px Verdana, sans-serif";
+	drawCtx.fillStyle = "#00ff44";
+	//clear the previous drawings
+        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+	//document.getElementById("faces").innerHTML = "Detected faces: ";
+	var parent = document.getElementById("face");
+	while(parent.firstChild){
+		parent.removeChild(parent.firstChild);
+	}
+	var chair = 0;
+	var person = 0;
+	faces.forEach(face => {
+        let x = face.x;
+        let y = face.y;
+        let width = face.width;
+        let height = face.height;
+
+        if(face.name == "chair")
+        	chair+=1
+
+        if(face.name == "person")
+        	person+=1
+
+        drawCtx.fillText(face.name + " - " + Math.round(face.score * 100) + "%", height + 5, x + 20);
+        drawCtx.strokeRect(height, x - 10, width - height, y - x);
+    });
+
+    var para = document.createElement("p")
+	var result = document.createTextNode("chair: " + chair);
+	var result1 = document.createTextNode("person: " + person);
+	para.appendChild(result);
+	para.appendChild(result1);
+	var element = document.getElementById("face");
+	element.appendChild(para);
+}
+//check if metadata is ready - we need the video size
+video.onloadedmetadata = () => {
+    console.log("video metadata ready");
+    gotMetadata = true;
+//    if (isPlaying)
+//        getvideoframe();
+};
+
+//see if the video has started playing
+video.onplaying = () => {
+    console.log("video playing");
+    isPlaying = true;
+    if (gotMetadata) {
+    	drawCanvas.width = video.videoWidth;
+		drawCanvas.height = video.videoHeight;
+        getvideoframe();
+    }
+};
+</script>
+</html>
